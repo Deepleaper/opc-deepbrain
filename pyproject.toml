@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opc-deepbrain"
+version = "0.1.0"
+description = "Local-first self-learning knowledge base. Turn your documents into searchable, evolving knowledge."
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Deepleaper", email = "dev@deepleaper.com"}
+]
+keywords = ["knowledge-base", "local", "ai", "memory", "self-learning", "ollama"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "aiosqlite>=0.19.0",
+]
+
+[project.optional-dependencies]
+pdf = ["PyMuPDF>=1.23.0"]
+docx = ["python-docx>=1.0.0"]
+chinese = ["jieba>=0.42.0"]
+all = ["PyMuPDF>=1.23.0", "python-docx>=1.0.0", "jieba>=0.42.0"]
+
+[project.scripts]
+deepbrain = "deepbrain.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Deepleaper/opc-deepbrain"
+Repository = "https://github.com/Deepleaper/opc-deepbrain"
+
+[tool.setuptools.packages.find]
+include = ["deepbrain*"]
