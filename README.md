@@ -132,6 +132,40 @@ ingest:
   max_file_size_mb: 50
 ```
 
+## 目录监控（v0.2.1+）
+
+```bash
+# 实时监控目录变化，自动摄入新/改文件
+deepbrain watch ~/Documents --namespace work
+
+# 指定轮询间隔（秒）
+deepbrain watch ~/Notes --interval 30
+```
+
+安装 watchdog 获得更好的监控性能：
+```bash
+pip install opc-deepbrain[watch]
+```
+
+## 冲突检测（v0.2.1+）
+
+```python
+brain = DeepBrain()
+
+# 检测某条知识的冲突
+conflicts = brain.detect_conflicts(entry_id)
+for c in conflicts:
+    print(f"冲突: {c['content']}")
+
+# 解决冲突：保留 A，废弃 B
+brain.resolve_conflict(keep_id=a, discard_id=b)
+```
+
+```bash
+# CLI 查看所有冲突
+deepbrain conflicts
+```
+
 ## 系统要求
 
 - Python 3.10+
