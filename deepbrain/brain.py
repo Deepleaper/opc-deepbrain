@@ -206,7 +206,116 @@ class DeepBrain:
                     self.conn.commit()
         threading.Thread(target=_embed, daemon=True).start()
 
+        # Auto conflict detection (async, best-effort)
+        def _detect():
+            try:
+                conflicts = self.detect_conflicts(entry_id)
+                if conflicts:
+                    meta = metadata or {}
+                    meta["conflict_with"] = [c["id"] for c in conflicts]
+                    with self._lock:
+                        self.conn.execute(
+                            "UPDATE deepbrain SET metadata=? WHERE id=?",
+                            (json.dumps(meta), entry_id),
+                        )
+                        self.conn.commit()
+            except Exception:
+                pass
+        threading.Thread(target=_detect, daemon=True).start()
+
         return entry_id
+
+    def detect_conflicts(self, entry_id: str) -> list[dict[str, Any]]:
+        """Detect knowledge entries that conflict with the given entry.
+        
+        Uses keyword overlap to find similar entries, then checks for contradiction
+        signals (opposite claims about same subject).
+        """
+        with self._lock:
+            row = self.conn.execute("SELECT * FROM deepbrain WHERE id=?", (entry_id,)).fetchone()
+        if not row:
+            return []
+
+        content = row["content"]
+        keywords = json.loads(row["keywords"] or "[]")
+        if not keywords:
+            return []
+
+        # Find similar entries (same namespace, different id, active)
+        like_parts = " OR ".join(["content LIKE ?"] * min(len(keywords), 3))
+        params = [f"%{k}%" for k in keywords[:3]]
+        with self._lock:
+            candidates = self.conn.execute(
+                f"""SELECT * FROM deepbrain 
+                    WHERE id != ? AND status='active' AND namespace=? AND ({like_parts})
+                    LIMIT 20""",
+                [entry_id, row["namespace"]] + params,
+            ).fetchall()
+
+        conflicts = []
+        content_lower = content.lower()
+        
+        # Contradiction signals
+        _NEGATION_PAIRS = [
+            ("not ", ""), ("don't ", "do "), ("doesn't ", "does "),
+            ("won't ", "will "), ("can't ", "can "), ("isn't ", "is "),
+            ("no longer ", "still "), ("停止", "继续"), ("不是", "是"),
+            ("不再", "仍然"), ("废弃", "使用"),
+        ]
+
+        for cand in candidates:
+            cand_content = cand["content"].lower()
+            # Check keyword overlap (high overlap = same topic)
+            cand_keywords = set(json.loads(cand["keywords"] or "[]"))
+            overlap = len(set(keywords) & cand_keywords)
+            if overlap < 2:
+                continue
+
+            # Check for contradiction signals
+            is_conflict = False
+            for neg, pos in _NEGATION_PAIRS:
+                if (neg in content_lower and pos in cand_content) or \
+                   (pos in content_lower and neg in cand_content):
+                    is_conflict = True
+                    break
+
+            # Also flag if same claim_type=fact about very similar content
+            if not is_conflict and row["claim_type"] == "fact" and cand["claim_type"] == "fact":
+                # High keyword overlap + different content = potential conflict
+                if overlap >= 3 and content_lower != cand_content:
+                    is_conflict = True
+
+            if is_conflict:
+                conflicts.append(self._row_to_dict(cand))
+
+        return conflicts
+
+    def resolve_conflict(self, keep_id: str, discard_id: str) -> None:
+        """Resolve a conflict: keep one entry, supersede the other."""
+        now = _now()
+        with self._lock:
+            self.conn.execute(
+                "UPDATE deepbrain SET status='superseded', valid_until=?, updated_at=? WHERE id=?",
+                (now, now, discard_id),
+            )
+            # Update winner metadata
+            row = self.conn.execute("SELECT metadata FROM deepbrain WHERE id=?", (keep_id,)).fetchone()
+            if row:
+                meta = json.loads(row["metadata"] or "{}")
+                resolved = meta.get("resolved_conflicts", [])
+                resolved.append(discard_id)
+                meta["resolved_conflicts"] = resolved
+                if "conflict_with" in meta and discard_id in meta["conflict_with"]:
+                    meta["conflict_with"].remove(discard_id)
+                self.conn.execute(
+                    "UPDATE deepbrain SET metadata=?, updated_at=? WHERE id=?",
+                    (json.dumps(meta), now, keep_id),
+                )
+            self.conn.commit()
+
+    def _now_str(self) -> str:
+        """Return current UTC timestamp as ISO string."""
+        return _now()
 
     def search(
         self,

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -95,34 +97,115 @@ def ingest_file(
         entry = brain.get(existing["id"])
         if entry and entry.get("metadata", {}).get("hash") == content_hash:
             return None  # No change
-        # Content changed — supersede old entry
+        # Content changed — supersede old entries from this file
         old_id = existing["id"]
+        # Expire all entries from this source
+        brain.conn.execute(
+            "UPDATE deepbrain SET status='superseded', valid_until=? WHERE source=? AND status='active'",
+            (_now_helper(), filepath),
+        )
+        brain.conn.commit()
     else:
         old_id = None
 
-    # Truncate for storage (keep first 5000 chars for now)
-    content = text[:5000]
+    # Chunk the document
+    from deepbrain.chunker import chunk_document
+    chunks = chunk_document(text, ext)
+    if not chunks:
+        chunks = [{"title": "", "content": text[:2000]}]
 
-    # Generate summary with local model (best-effort)
-    summary = _summarize(content)
-    store_content = summary if summary else content[:2000]
+    # Try structured extraction via Ollama
+    entries = _extract_structured(chunks, filepath)
+    
+    # Fallback: store chunks as raw observations
+    if not entries:
+        entries = []
+        for chunk in chunks[:20]:  # Cap at 20 chunks per file
+            entries.append({
+                "content": chunk["content"][:1000],
+                "claim_type": "observation",
+                "evidence": chunk["content"][:300],
+                "confidence": 0.4,
+            })
 
-    entry_id = brain.learn(
-        content=store_content,
-        source=filepath,
-        namespace=namespace,
-        claim_type="fact",
-        evidence=content[:500],
-        supersedes=old_id,
-        metadata={
-            "hash": content_hash,
-            "filename": os.path.basename(filepath),
-            "ext": ext,
-            "size": os.path.getsize(filepath),
-            "full_content_chars": len(text),
-        },
-    )
-    return entry_id
+    # Store all entries
+    first_id = None
+    for entry in entries:
+        eid = brain.learn(
+            content=entry["content"],
+            source=filepath,
+            namespace=namespace,
+            claim_type=entry.get("claim_type", "observation"),
+            confidence=entry.get("confidence", 0.5),
+            evidence=entry.get("evidence", ""),
+            metadata={
+                "hash": content_hash,
+                "filename": os.path.basename(filepath),
+                "ext": ext,
+                "size": os.path.getsize(filepath),
+                "chunk_title": entry.get("title", ""),
+            },
+        )
+        if not first_id:
+            first_id = eid
+    return first_id
+
+
+def _extract_structured(chunks: list[dict], filepath: str) -> list[dict] | None:
+    """Use Ollama to extract structured knowledge entries from chunks."""
+    model = os.environ.get("DEEPBRAIN_MODEL", "qwen2.5:7b")
+    base_url = os.environ.get("DEEPBRAIN_OLLAMA_URL", "http://localhost:11434")
+
+    all_entries = []
+    for chunk in chunks[:10]:  # Limit to 10 chunks per file
+        prompt = f"""从以下文本中提取知识条目。每条知识包含：
+- content: 一句话总结的知识点（不超过100字）
+- claim_type: fact（确定的事实）/ inference（推断）/ preference（偏好）/ constraint（约束）/ observation（观察）
+- evidence: 原文中支持这条知识的引用（不超过50字）
+- confidence: 0.0-1.0 的置信度
+
+返回 JSON 数组，不要其他内容。如果没有有价值的知识，返回空数组 []。
+
+文本：
+{chunk['content'][:2000]}
+
+JSON:"""
+
+        try:
+            import urllib.request
+            url = f"{base_url.rstrip('/')}/api/generate"
+            body = {
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {"num_predict": 500, "temperature": 0.1},
+            }
+            req = urllib.request.Request(
+                url, data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read())
+            response = data.get("response", "").strip()
+            
+            # Parse JSON from response
+            # Try to find JSON array in response
+            import re
+            match = re.search(r'\[.*\]', response, re.DOTALL)
+            if match:
+                entries = json.loads(match.group())
+                if isinstance(entries, list):
+                    for e in entries:
+                        if isinstance(e, dict) and "content" in e:
+                            e.setdefault("claim_type", "observation")
+                            e.setdefault("confidence", 0.5)
+                            e.setdefault("evidence", chunk["content"][:100])
+                            e["title"] = chunk.get("title", "")
+                            all_entries.append(e)
+        except Exception:
+            continue
+
+    return all_entries if all_entries else None
 
 
 def _extract_text(filepath: str, ext: str) -> str | None:
@@ -212,5 +295,5 @@ def _summarize(text: str) -> str | None:
         return None
 
 
-# Need json for _summarize
-import json
+def _now_helper():
+    return datetime.now(timezone.utc).isoformat()

@@ -1,6 +1,7 @@
 """DeepBrain CLI — command-line interface for local knowledge base."""
 
 import argparse
+import json
 import os
 import sys
 
@@ -36,6 +37,15 @@ def main():
 
     # evolve
     sub.add_parser("evolve", help="Run knowledge evolution (decay, expire)")
+
+    # watch
+    p_watch = sub.add_parser("watch", help="Watch directory for changes, auto-ingest")
+    p_watch.add_argument("directory", help="Directory to watch")
+    p_watch.add_argument("--namespace", default="documents", help="Namespace")
+    p_watch.add_argument("--interval", type=float, default=5.0, help="Poll interval (sec)")
+
+    # conflicts
+    p_conflicts = sub.add_parser("conflicts", help="Show entries with detected conflicts")
 
     args = parser.parse_args()
 
@@ -100,6 +110,27 @@ def main():
     elif args.command == "evolve":
         result = brain.evolve()
         print(f"Evolution complete: {result['decayed']} decayed, {result['expired']} expired")
+
+    elif args.command == "watch":
+        from deepbrain.watch import watch_directory
+        watch_directory(brain, args.directory, namespace=args.namespace, interval=args.interval)
+
+    elif args.command == "conflicts":
+        with brain._lock:
+            rows = brain.conn.execute(
+                "SELECT id, content, metadata FROM deepbrain WHERE status='active' AND metadata LIKE '%conflict_with%'"
+            ).fetchall()
+        if not rows:
+            print("No conflicts detected.")
+            return
+        print(f"Found {len(rows)} entries with conflicts:\n")
+        for row in rows:
+            meta = json.loads(row["metadata"] or "{}")
+            conflicts = meta.get("conflict_with", [])
+            print(f"  ID: {row['id'][:8]}...")
+            print(f"  Content: {row['content'][:80]}")
+            print(f"  Conflicts with: {[c[:8] for c in conflicts]}")
+            print()
 
 
 if __name__ == "__main__":
