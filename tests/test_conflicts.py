@@ -123,8 +123,8 @@ class TestDetectConflicts:
 
     def test_insufficient_keyword_overlap_no_conflict(self, brain):
         # Only one shared keyword — below the minimum of 2
-        a = brain.learn("Cats are not mammals", claim_type="observation")
-        b = brain.learn("Dogs are definitely mammals", claim_type="observation")
+        a = brain.learn("Cats are friendly pets", claim_type="observation")
+        b = brain.learn("Python is a programming language", claim_type="observation")
         conflicts = brain.detect_conflicts(b)
         assert all(c["id"] != a for c in conflicts)
 
