@@ -1,177 +1,221 @@
-# OPC DeepBrain
+<p align="center">
+  <h1 align="center">🧠 OPC DeepBrain</h1>
+  <p align="center"><strong>Self-learning knowledge base that runs 100% on your machine.</strong></p>
+  <p align="center">No cloud. No API keys. No cost. Your data never leaves your computer.</p>
+</p>
 
-> 纯本地的自学习知识库。把你电脑里的文档变成可搜索、可进化的知识。
+<p align="center">
+  <a href="https://pypi.org/project/opc-deepbrain/"><img src="https://img.shields.io/pypi/v/opc-deepbrain?color=blue" alt="PyPI"></a>
+  <a href="https://pypi.org/project/opc-deepbrain/"><img src="https://img.shields.io/pypi/dm/opc-deepbrain" alt="Downloads"></a>
+  <a href="https://github.com/Deepleaper/opc-deepbrain/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="License"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python"></a>
+</p>
 
-## 它做什么？
+---
 
-把你指定目录里的文档（PDF、Word、Markdown、文本文件）自动读取、切片、摘要、建索引。之后你可以用自然语言搜索你自己的知识库。
+## Why DeepBrain?
 
-不上传任何数据。不需要网络。不花钱。
+| | Mem0 | RAG | **DeepBrain** |
+|---|---|---|---|
+| Runs locally | ❌ Cloud | ❌ Needs vector DB | ✅ SQLite only |
+| Self-learning | ✅ | ❌ | ✅ |
+| Knowledge evolution | ❌ | ❌ | ✅ 6-layer |
+| Conflict detection | ❌ | ❌ | ✅ |
+| Cost | $$ API fees | $ Infra | **$0** |
+| Privacy | Data on their server | Depends | **Never leaves your machine** |
 
-## 安装
+---
+
+## Quick Start
+
+### Prerequisites
 
 ```bash
-pip install opc-deepbrain
+# 1. Install Ollama (local AI model runner)
+# macOS / Linux:
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Windows: download from https://ollama.com/download
+
+# 2. Pull required models
+ollama pull qwen2.5:7b          # for knowledge extraction
+ollama pull nomic-embed-text    # for semantic search
 ```
 
-## 快速开始
+### Install & Use
 
 ```bash
-# 初始化知识库
+# Install
+pip install opc-deepbrain
+
+# Initialize
 deepbrain init
 
-# 摄入文档目录
+# Learn something
+deepbrain learn "Our company uses Python 3.12 and PostgreSQL"
+
+# Ingest a directory of documents
 deepbrain ingest ~/Documents
-deepbrain ingest ~/Notes
 
-# 搜索
-deepbrain search "关于融资的策略"
+# Search your knowledge
+deepbrain search "what database do we use"
 
-# 查看知识库统计
+# Watch a directory (auto-ingest on change)
+deepbrain watch ~/Notes
+
+# Check stats
 deepbrain stats
 ```
 
-## 核心能力
-
-**📂 文档摄入**
-
-指定目录，自动扫描 PDF / Word / Markdown / TXT 文件。增量处理——只处理新增和修改的文件。
-
-**🧠 智能摘要**
-
-用本地模型（Ollama）给每个文档生成摘要。不是存原文，是提炼知识。
-
-**🔍 混合搜索**
-
-关键词精确匹配 + 向量语义搜索，RRF 融合排序。中文分词支持。
-
-**🔄 知识进化**
-
-- 跨文档聚合同主题内容
-- 自动去重
-- 知识衰减（过时的自动降权）
-- 冲突检测（矛盾的知识标注出来）
-
-**📋 知识状态**
-
-每条知识都有：
-- 类型（事实 / 推断 / 偏好 / 约束）
-- 证据（来源原文引用）
-- 时效（生效时间 / 失效时间）
-- 置信度（0-1，随时间衰减）
-
-**🔒 完全本地**
-
-- 存储：SQLite（一个 .db 文件）
-- 模型：Ollama（本地运行）
-- 零网络依赖
-
-## 作为 Python 库使用
+### As a Python Library
 
 ```python
 from deepbrain import DeepBrain
 
 brain = DeepBrain()
 
-# 摄入
-brain.ingest("~/Documents")
+# Learn
+brain.learn("FastAPI is our web framework", claim_type="fact")
+brain.learn("Never deploy on Fridays", claim_type="constraint")
 
-# 学习一条知识
-brain.learn("跃盟科技是一家AI情景智能公司", claim_type="fact")
-
-# 搜索
-results = brain.search("跃盟科技做什么")
+# Search
+results = brain.search("web framework")
 for r in results:
     print(f"[{r['claim_type']}] {r['content']}")
 
-# 进化（聚合、去重、衰减）
+# Detect conflicts
+conflicts = brain.detect_conflicts(entry_id)
+
+# Evolve (aggregate, deduplicate, decay)
 brain.evolve()
 ```
 
-## 与 OPC Agent 集成
+---
 
-OPC DeepBrain 可以被 OPC Agent 调用，让你的 AI 助手自动使用你的知识库：
+## Core Features
 
-```python
-from deepbrain import DeepBrain
+### 📂 Document Ingestion
+Scans PDF, Word, Markdown, code files. Incremental — only processes new/modified files.
 
-brain = DeepBrain()
-context = brain.search("用户问题相关的内容")
-# 注入到 AI 对话的 system prompt
-```
+### 🧠 Structured Extraction
+Uses local Ollama to extract typed knowledge entries (fact / inference / preference / constraint) with evidence and confidence scores.
 
-## 支持的文件格式
+### 🔍 Hybrid Search
+Keyword matching + semantic vectors, fused with RRF ranking. Chinese tokenization supported.
 
-| 格式 | 扩展名 | 依赖 |
-|------|--------|------|
-| Markdown | .md | 无 |
-| 纯文本 | .txt | 无 |
-| PDF | .pdf | PyMuPDF |
-| Word | .docx | python-docx |
-| 代码文件 | .py .js .ts .java 等 | 无 |
+### 🔄 Knowledge Evolution
+- Cross-document aggregation
+- Automatic deduplication
+- Time-based confidence decay
+- **Conflict detection** — contradicting knowledge flagged automatically
 
-## 配置
+### 📋 Knowledge State
+Every entry has:
+- `claim_type`: fact / inference / preference / constraint / observation
+- `evidence`: source text citation
+- `confidence`: 0-1, decays over time
+- `valid_from` / `valid_until`: temporal validity
+
+### 👁️ Directory Watch
+Real-time monitoring with auto-ingest. Uses watchdog (fast) with polling fallback.
+
+### 🔒 100% Local
+- Storage: SQLite (single `.db` file)
+- AI: Ollama (runs on your machine)
+- Network: **zero** outbound connections
+
+---
+
+## Supported Formats
+
+| Format | Extensions | Extra Dependency |
+|--------|-----------|-----------------|
+| Markdown | `.md` `.rst` | — |
+| Plain text | `.txt` | — |
+| PDF | `.pdf` | `pip install opc-deepbrain[pdf]` |
+| Word | `.docx` | `pip install opc-deepbrain[docx]` |
+| Code | `.py` `.js` `.ts` `.java` `.go` `.rs` `.c` `.cpp` `.rb` | — |
+| Data | `.json` `.yaml` `.toml` `.csv` | — |
+
+---
+
+## Configuration
 
 ```yaml
-# ~/.deepbrain/config.yaml
+# ~/.deepbrain/config.yaml (auto-created by `deepbrain init`)
 storage:
   path: ~/.deepbrain/brain.db
 
 ollama:
   base_url: http://localhost:11434
-  model: qwen2.5:7b          # 摘要/提取用
-  embed_model: nomic-embed-text  # 向量化用
+  model: qwen2.5:7b
+  embed_model: nomic-embed-text
 
 ingest:
-  watch_dirs:
-    - ~/Documents
-    - ~/Notes
   ignore_patterns:
-    - "*.tmp"
     - "node_modules/**"
+    - ".git/**"
+    - "__pycache__/**"
   max_file_size_mb: 50
 ```
 
-## 目录监控（v0.2.1+）
+---
 
-```bash
-# 实时监控目录变化，自动摄入新/改文件
-deepbrain watch ~/Documents --namespace work
+## Integration with OPC Agent
 
-# 指定轮询间隔（秒）
-deepbrain watch ~/Notes --interval 30
-```
-
-安装 watchdog 获得更好的监控性能：
-```bash
-pip install opc-deepbrain[watch]
-```
-
-## 冲突检测（v0.2.1+）
+DeepBrain is the memory engine inside [OPC Agent](https://github.com/Deepleaper/opc-agent):
 
 ```python
+from deepbrain import DeepBrain
+
 brain = DeepBrain()
-
-# 检测某条知识的冲突
-conflicts = brain.detect_conflicts(entry_id)
-for c in conflicts:
-    print(f"冲突: {c['content']}")
-
-# 解决冲突：保留 A，废弃 B
-brain.resolve_conflict(keep_id=a, discard_id=b)
+context = brain.search("relevant to user question")
+# Inject into AI conversation as context
 ```
 
-```bash
-# CLI 查看所有冲突
-deepbrain conflicts
-```
+---
 
-## 系统要求
+## System Requirements
 
-- Python 3.10+
-- Ollama（推荐 qwen2.5:7b + nomic-embed-text）
-- 8GB+ 内存
+| Requirement | Minimum | Recommended |
+|------------|---------|-------------|
+| Python | 3.10+ | 3.12+ |
+| RAM | 4 GB | 8 GB+ |
+| Ollama | Any | Latest |
+| Disk | 100 MB | 1 GB+ (for models) |
 
-## 许可证
+---
 
-Apache-2.0
+## Roadmap
+
+- [x] Document ingestion with smart chunking
+- [x] Hybrid search (keyword + semantic)
+- [x] Structured extraction (fact/inference/preference/constraint)
+- [x] Conflict detection & resolution
+- [x] Directory watch with auto-ingest
+- [ ] Web UI for knowledge browsing
+- [ ] Multi-brain sync
+- [ ] Plugin system
+
+---
+
+## Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+---
+
+## License
+
+[Apache-2.0](LICENSE) — Use it however you want. Commercial use OK.
+
+---
+
+<p align="center">
+  <strong>Part of the <a href="https://github.com/Deepleaper">Deepleaper</a> open source ecosystem</strong><br>
+  🧠 <a href="https://github.com/Deepleaper/opc-deepbrain">DeepBrain</a> · 🤖 <a href="https://github.com/Deepleaper/opc-agent">OPC Agent</a> · 🚀 <a href="https://github.com/Deepleaper/leaper-agent">Leaper Agent</a>
+</p>
+
+<p align="center">
+  ⭐ If DeepBrain helps you, give it a star!
+</p>
