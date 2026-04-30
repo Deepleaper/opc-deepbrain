@@ -95,7 +95,36 @@ _STOP_WORDS = frozenset(
     "off over under again further once here there".split()
 )
 
+# Negation words used for keyword-scoped contradiction detection
+_NEGATION_WORDS: frozenset[str] = frozenset([
+    "not", "no", "never", "neither", "nor", "lack", "fail", "false",
+    "don't", "doesn't", "didn't", "won't", "can't", "isn't",
+    "aren't", "wasn't", "weren't", "haven't", "hasn't", "hadn't",
+    "no longer",
+    "不", "没", "非", "无", "否", "停止", "不是", "不再", "废弃",
+])
+
+# Explicit contraction pairs (negated_form, positive_form) for cross-entry contradiction checks
+_NEGATION_CONTRACTION_PAIRS: tuple[tuple[str, str], ...] = (
+    ("don't", "do"), ("doesn't", "does"), ("won't", "will"),
+    ("can't", "can"), ("isn't", "is"), ("aren't", "are"),
+    ("wasn't", "was"), ("weren't", "were"), ("haven't", "have"),
+    ("hasn't", "has"), ("hadn't", "had"), ("no longer", "still"),
+    ("停止", "继续"), ("不是", "是"), ("不再", "仍然"), ("废弃", "使用"),
+)
+
 _RRF_K = 60
+
+
+def _has_negation_near(text_lower: str, keyword: str, window: int = 60) -> bool:
+    """Return True if a negation word appears within *window* chars of *keyword*."""
+    idx = text_lower.find(keyword.lower())
+    if idx == -1:
+        return False
+    start = max(0, idx - window)
+    end = min(len(text_lower), idx + len(keyword) + window)
+    snippet = text_lower[start:end]
+    return any(neg in snippet for neg in _NEGATION_WORDS)
 
 
 # ─── Schema ──────────────────────────────────────────────────────────────────
@@ -226,63 +255,75 @@ class DeepBrain:
         return entry_id
 
     def detect_conflicts(self, entry_id: str) -> list[dict[str, Any]]:
-        """Detect knowledge entries that conflict with the given entry.
-        
-        Uses keyword overlap to find similar entries, then checks for contradiction
-        signals (opposite claims about same subject).
+        """Detect knowledge entries that contradict the given entry.
+
+        Strategy:
+        1. Find candidates in the same namespace with ≥2 overlapping keywords.
+        2. Flag a conflict when an explicit contraction pair (e.g. "don't" vs "do")
+           appears asymmetrically across the two entries.
+        3. Flag a conflict when a shared keyword is negated in one entry but
+           affirmed in the other (keyword-scoped negation via context window).
+        4. Flag two ``fact`` entries as conflicting when they share ≥3 keywords
+           but differ in content.
+
+        Args:
+            entry_id: ID of the entry to check for conflicts.
+
+        Returns:
+            List of conflicting entry dicts (embedding field excluded).
         """
         with self._lock:
             row = self.conn.execute("SELECT * FROM deepbrain WHERE id=?", (entry_id,)).fetchone()
         if not row:
             return []
 
-        content = row["content"]
-        keywords = json.loads(row["keywords"] or "[]")
+        content: str = row["content"]
+        keywords: list[str] = json.loads(row["keywords"] or "[]")
         if not keywords:
             return []
 
-        # Find similar entries (same namespace, different id, active)
         like_parts = " OR ".join(["content LIKE ?"] * min(len(keywords), 3))
-        params = [f"%{k}%" for k in keywords[:3]]
+        params: list[Any] = [f"%{k}%" for k in keywords[:3]]
         with self._lock:
             candidates = self.conn.execute(
-                f"""SELECT * FROM deepbrain 
+                f"""SELECT * FROM deepbrain
                     WHERE id != ? AND status='active' AND namespace=? AND ({like_parts})
                     LIMIT 20""",
                 [entry_id, row["namespace"]] + params,
             ).fetchall()
 
-        conflicts = []
         content_lower = content.lower()
-        
-        # Contradiction signals
-        _NEGATION_PAIRS = [
-            ("not ", ""), ("don't ", "do "), ("doesn't ", "does "),
-            ("won't ", "will "), ("can't ", "can "), ("isn't ", "is "),
-            ("no longer ", "still "), ("停止", "继续"), ("不是", "是"),
-            ("不再", "仍然"), ("废弃", "使用"),
-        ]
+        conflicts: list[dict[str, Any]] = []
 
         for cand in candidates:
-            cand_content = cand["content"].lower()
-            # Check keyword overlap (high overlap = same topic)
-            cand_keywords = set(json.loads(cand["keywords"] or "[]"))
-            overlap = len(set(keywords) & cand_keywords)
-            if overlap < 2:
+            cand_lower: str = cand["content"].lower()
+            cand_keywords: set[str] = set(json.loads(cand["keywords"] or "[]"))
+            shared: set[str] = set(keywords) & cand_keywords
+            if len(shared) < 2:
                 continue
 
-            # Check for contradiction signals
             is_conflict = False
-            for neg, pos in _NEGATION_PAIRS:
-                if (neg in content_lower and pos in cand_content) or \
-                   (pos in content_lower and neg in cand_content):
+
+            # Pass 1: explicit contraction-pair contradiction
+            for neg_form, pos_form in _NEGATION_CONTRACTION_PAIRS:
+                entry_has_neg = neg_form in content_lower
+                entry_has_pos = pos_form in content_lower and not entry_has_neg
+                cand_has_neg = neg_form in cand_lower
+                cand_has_pos = pos_form in cand_lower and not cand_has_neg
+                if (entry_has_neg and cand_has_pos) or (cand_has_neg and entry_has_pos):
                     is_conflict = True
                     break
 
-            # Also flag if same claim_type=fact about very similar content
+            # Pass 2: keyword-scoped negation — one entry negates a shared keyword, other affirms it
+            if not is_conflict:
+                for kw in shared:
+                    if _has_negation_near(content_lower, kw) != _has_negation_near(cand_lower, kw):
+                        is_conflict = True
+                        break
+
+            # Pass 3: two 'fact' entries with high keyword overlap but different content
             if not is_conflict and row["claim_type"] == "fact" and cand["claim_type"] == "fact":
-                # High keyword overlap + different content = potential conflict
-                if overlap >= 3 and content_lower != cand_content:
+                if len(shared) >= 3 and content_lower != cand_lower:
                     is_conflict = True
 
             if is_conflict:
@@ -291,22 +332,37 @@ class DeepBrain:
         return conflicts
 
     def resolve_conflict(self, keep_id: str, discard_id: str) -> None:
-        """Resolve a conflict: keep one entry, supersede the other."""
+        """Mark one conflicting entry as superseded, retaining the other as authoritative.
+
+        Sets ``discard_id`` status to ``'superseded'`` and updates ``keep_id``'s
+        metadata: appends to ``resolved_conflicts`` and removes from ``conflict_with``.
+
+        Args:
+            keep_id: ID of the entry to retain.
+            discard_id: ID of the entry to supersede.
+
+        Raises:
+            ValueError: If ``keep_id`` and ``discard_id`` are identical.
+        """
+        if keep_id == discard_id:
+            raise ValueError("keep_id and discard_id must differ")
         now = _now()
         with self._lock:
             self.conn.execute(
                 "UPDATE deepbrain SET status='superseded', valid_until=?, updated_at=? WHERE id=?",
                 (now, now, discard_id),
             )
-            # Update winner metadata
             row = self.conn.execute("SELECT metadata FROM deepbrain WHERE id=?", (keep_id,)).fetchone()
             if row:
-                meta = json.loads(row["metadata"] or "{}")
-                resolved = meta.get("resolved_conflicts", [])
-                resolved.append(discard_id)
+                meta: dict[str, Any] = json.loads(row["metadata"] or "{}")
+                resolved: list[str] = meta.get("resolved_conflicts", [])
+                if discard_id not in resolved:
+                    resolved.append(discard_id)
                 meta["resolved_conflicts"] = resolved
-                if "conflict_with" in meta and discard_id in meta["conflict_with"]:
-                    meta["conflict_with"].remove(discard_id)
+                conflict_with: list[str] = meta.get("conflict_with", [])
+                if discard_id in conflict_with:
+                    conflict_with.remove(discard_id)
+                meta["conflict_with"] = conflict_with
                 self.conn.execute(
                     "UPDATE deepbrain SET metadata=?, updated_at=? WHERE id=?",
                     (json.dumps(meta), now, keep_id),
