@@ -31,17 +31,52 @@ _EMBED_URL = os.environ.get("DEEPBRAIN_EMBED_URL", "http://localhost:11434")
 _embed_available: bool | None = None
 _embed_lock = threading.Lock()
 
+# Local n-gram hash embedding — zero external dependencies, always available
+_LOCAL_EMBED_DIM = 256
+_USE_LOCAL_EMBED: bool = os.environ.get("DEEPBRAIN_LOCAL_EMBED", "1") != "0"
+_USE_RECENCY_BIAS: bool = os.environ.get("DEEPBRAIN_RECENCY_BIAS", "1") != "0"
+
+
+def _local_embedding(text: str) -> list[float]:
+    """Offline character n-gram hash embedding; no external deps required."""
+    import hashlib
+    vec = [0.0] * _LOCAL_EMBED_DIM
+    t = text.lower().strip()
+    if not t:
+        return vec
+    # Character unigrams — Chinese chars weighted higher
+    for ch in t:
+        if "一" <= ch <= "鿿":
+            h = int(hashlib.md5(ch.encode()).hexdigest()[:8], 16) % _LOCAL_EMBED_DIM
+            vec[h] += 1.5
+        elif ch.isalpha():
+            h = int(hashlib.md5(ch.encode()).hexdigest()[:8], 16) % _LOCAL_EMBED_DIM
+            vec[h] += 1.0
+    # Character bigrams
+    for i in range(len(t) - 1):
+        gram = t[i : i + 2]
+        if any(c.isalpha() or "一" <= c <= "鿿" for c in gram):
+            h = int(hashlib.md5(gram.encode("utf-8", errors="ignore")).hexdigest()[:8], 16) % _LOCAL_EMBED_DIM
+            vec[h] += 1.0
+    # Character trigrams
+    for i in range(len(t) - 2):
+        gram = t[i : i + 3]
+        h = int(hashlib.md5(gram.encode("utf-8", errors="ignore")).hexdigest()[:8], 16) % _LOCAL_EMBED_DIM
+        vec[h] += 0.5
+    norm = sum(x * x for x in vec) ** 0.5
+    return [x / norm for x in vec] if norm else vec
+
 
 def _get_embedding(text: str) -> list[float] | None:
     global _embed_available
     if _embed_available is False:
-        return None
+        return _local_embedding(text) if _USE_LOCAL_EMBED else None
     try:
         import urllib.request
         url = f"{_EMBED_URL.rstrip('/')}/api/embeddings"
         body = json.dumps({"model": _EMBED_MODEL, "prompt": text[:2000]}).encode()
         req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=0.5) as resp:
             data = json.loads(resp.read())
         with _embed_lock:
             _embed_available = True
@@ -49,9 +84,10 @@ def _get_embedding(text: str) -> list[float] | None:
     except Exception as e:
         with _embed_lock:
             if _embed_available is None:
-                logger.info("Embedding unavailable (%s) — keyword fallback", e)
+                fallback = "local n-gram embedding" if _USE_LOCAL_EMBED else "keyword fallback"
+                logger.info("Embedding unavailable (%s) — %s", e, fallback)
                 _embed_available = False
-        return None
+        return _local_embedding(text) if _USE_LOCAL_EMBED else None
 
 
 def _vec_to_blob(vec: list[float]) -> bytes:
@@ -159,6 +195,36 @@ CREATE INDEX IF NOT EXISTS idx_claim ON deepbrain (claim_type);
 """
 
 
+class _ConnProxy:
+    """Thin sqlite3.Connection proxy.
+
+    Intercepts close() so it holds the DeepBrain lock while closing — this
+    ensures any in-flight SQL on background threads finishes before the
+    underlying C object is freed (prevents Windows access violations).
+    """
+
+    def __init__(self, real: sqlite3.Connection, lock: threading.Lock) -> None:
+        object.__setattr__(self, "_real", real)
+        object.__setattr__(self, "_lock", lock)
+        object.__setattr__(self, "_closed", False)
+
+    def close(self) -> None:
+        lock: threading.Lock = object.__getattribute__(self, "_lock")
+        with lock:
+            object.__setattr__(self, "_closed", True)
+            object.__getattribute__(self, "_real").close()
+
+    @property
+    def is_closed(self) -> bool:
+        return object.__getattribute__(self, "_closed")
+
+    def __getattr__(self, name: str):
+        return getattr(object.__getattribute__(self, "_real"), name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        setattr(object.__getattribute__(self, "_real"), name, value)
+
+
 class DeepBrain:
     """Local-first self-learning knowledge base."""
 
@@ -168,9 +234,10 @@ class DeepBrain:
             home.mkdir(exist_ok=True)
             db_path = str(home / "brain.db")
         self.db_path = db_path
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
+        _real = sqlite3.connect(db_path, check_same_thread=False)
+        _real.row_factory = sqlite3.Row
+        self.conn: _ConnProxy = _ConnProxy(_real, self._lock)
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -226,23 +293,32 @@ class DeepBrain:
         # Async embedding
         def _embed():
             vec = _get_embedding(content)
-            if vec:
+            if vec and not self.conn.is_closed:
                 with self._lock:
-                    self.conn.execute(
-                        "UPDATE deepbrain SET embedding=? WHERE id=?",
-                        (_vec_to_blob(vec), entry_id),
-                    )
-                    self.conn.commit()
+                    if self.conn.is_closed:
+                        return
+                    try:
+                        self.conn.execute(
+                            "UPDATE deepbrain SET embedding=? WHERE id=?",
+                            (_vec_to_blob(vec), entry_id),
+                        )
+                        self.conn.commit()
+                    except Exception:
+                        pass
         threading.Thread(target=_embed, daemon=True).start()
 
         # Auto conflict detection (async, best-effort)
         def _detect():
             try:
+                if self.conn.is_closed:
+                    return
                 conflicts = self.detect_conflicts(entry_id)
-                if conflicts:
+                if conflicts and not self.conn.is_closed:
                     meta = metadata or {}
                     meta["conflict_with"] = [c["id"] for c in conflicts]
                     with self._lock:
+                        if self.conn.is_closed:
+                            return
                         self.conn.execute(
                             "UPDATE deepbrain SET metadata=? WHERE id=?",
                             (json.dumps(meta), entry_id),
@@ -258,13 +334,14 @@ class DeepBrain:
         """Detect knowledge entries that contradict the given entry.
 
         Strategy:
-        1. Find candidates in the same namespace with ≥2 overlapping keywords.
-        2. Flag a conflict when an explicit contraction pair (e.g. "don't" vs "do")
-           appears asymmetrically across the two entries.
-        3. Flag a conflict when a shared keyword is negated in one entry but
-           affirmed in the other (keyword-scoped negation via context window).
-        4. Flag two ``fact`` entries as conflicting when they share ≥3 keywords
-           but differ in content.
+        0. Return early if the new entry contains additive language (e.g. "也在用").
+        1. Find candidates in the same namespace via keyword LIKE search.
+        2. When the new entry contains a supersede indicator (最新/调整为/迁到/…)
+           and is a fact, also scan *all* same-namespace facts regardless of keyword overlap.
+        3. Flag a conflict when an explicit contraction pair appears asymmetrically.
+        4. Flag a conflict when a shared keyword is negated in one entry but affirmed in the other.
+        5. Flag two ``fact`` entries as conflicting when they share ≥1 keyword but differ in content.
+        6. Flag two ``fact`` entries when a supersede indicator is present and content differs.
 
         Args:
             entry_id: ID of the entry to check for conflicts.
@@ -273,6 +350,8 @@ class DeepBrain:
             List of conflicting entry dicts (embedding field excluded).
         """
         with self._lock:
+            if self.conn.is_closed:
+                return []
             row = self.conn.execute("SELECT * FROM deepbrain WHERE id=?", (entry_id,)).fetchone()
         if not row:
             return []
@@ -282,25 +361,53 @@ class DeepBrain:
         if not keywords:
             return []
 
+        content_lower = content.lower()
+
+        # Pass 0: additive language means this entry complements rather than replaces
+        _ADDITIVE = ("也在用", "也用", "同时支持", "also using", "also use")
+        if any(p in content_lower for p in _ADDITIVE):
+            return []
+
+        # Supersede indicators: the new entry likely replaces an older fact
+        _SUPERSEDE = ("最新", "调整为", "调整到", "迁到", "迁移", "改为", "改用", "已经迁", "取代", "替换")
+        has_supersede = any(p in content_lower for p in _SUPERSEDE)
+
+        # Keyword-based candidate search
         like_parts = " OR ".join(["content LIKE ?"] * min(len(keywords), 3))
         params: list[Any] = [f"%{k}%" for k in keywords[:3]]
         with self._lock:
-            candidates = self.conn.execute(
+            if self.conn.is_closed:
+                return []
+            kw_candidates = self.conn.execute(
                 f"""SELECT * FROM deepbrain
                     WHERE id != ? AND status='active' AND namespace=? AND ({like_parts})
                     LIMIT 20""",
                 [entry_id, row["namespace"]] + params,
             ).fetchall()
 
-        content_lower = content.lower()
+        candidates_by_id: dict[str, Any] = {c["id"]: c for c in kw_candidates}
+
+        # Broad search: when the new entry signals it supersedes an older fact,
+        # also consider all same-namespace facts even with no keyword overlap
+        if has_supersede and row["claim_type"] == "fact":
+            with self._lock:
+                if self.conn.is_closed:
+                    return []
+                broad = self.conn.execute(
+                    """SELECT * FROM deepbrain
+                       WHERE id != ? AND status='active' AND namespace=? AND claim_type='fact'
+                       LIMIT 20""",
+                    (entry_id, row["namespace"]),
+                ).fetchall()
+            for c in broad:
+                candidates_by_id[c["id"]] = c
+
         conflicts: list[dict[str, Any]] = []
 
-        for cand in candidates:
+        for cand in candidates_by_id.values():
             cand_lower: str = cand["content"].lower()
             cand_keywords: set[str] = set(json.loads(cand["keywords"] or "[]"))
             shared: set[str] = set(keywords) & cand_keywords
-            if len(shared) < 2:
-                continue
 
             is_conflict = False
 
@@ -321,9 +428,14 @@ class DeepBrain:
                         is_conflict = True
                         break
 
-            # Pass 3: two 'fact' entries with high keyword overlap but different content
+            # Pass 3: two 'fact' entries with ≥1 shared keyword and different content
             if not is_conflict and row["claim_type"] == "fact" and cand["claim_type"] == "fact":
-                if len(shared) >= 3 and content_lower != cand_lower:
+                if len(shared) >= 1 and content_lower != cand_lower:
+                    is_conflict = True
+
+            # Pass 4: supersede indicator — any co-namespace fact is superseded
+            if not is_conflict and has_supersede and row["claim_type"] == "fact" and cand["claim_type"] == "fact":
+                if content_lower != cand_lower:
                     is_conflict = True
 
             if is_conflict:
@@ -435,6 +547,23 @@ class DeepBrain:
             scores[eid] = scores.get(eid, 0) + 1.0 / (_RRF_K + rank + 1)
         for rank, (eid, _) in enumerate(vec_results):
             scores[eid] = scores.get(eid, 0) + 1.0 / (_RRF_K + rank + 1)
+
+        # Small recency bonus — tiebreaks towards newer entries without overriding relevance
+        if scores and _USE_RECENCY_BIAS:
+            now_dt = datetime.now(timezone.utc)
+            placeholders = ",".join("?" * len(scores))
+            with self._lock:
+                ts_rows = self.conn.execute(
+                    f"SELECT id, updated_at FROM deepbrain WHERE id IN ({placeholders})",
+                    list(scores.keys()),
+                ).fetchall()
+            for ts_row in ts_rows:
+                try:
+                    updated = datetime.fromisoformat(ts_row["updated_at"].replace("Z", "+00:00"))
+                    age_days = (now_dt - updated).total_seconds() / 86400
+                    scores[ts_row["id"]] += 0.001 / (1.0 + age_days * 0.1)
+                except Exception:
+                    pass
 
         # Fallback: if nothing found, return recent entries
         if not scores:
