@@ -512,20 +512,33 @@ class DeepBrain:
         where_sql = " AND ".join(where)
 
         # Keyword search
-        kw_results: list[tuple[str, float]] = []
+        kw_results: list[tuple[str, float, str]] = []  # (id, score, updated_at)
         if query_terms:
             like_parts = " OR ".join(["content LIKE ?"] * len(query_terms))
             kw_params = params + [f"%{t}%" for t in query_terms[:5]]
             with self._lock:
                 rows = self.conn.execute(
-                    f"SELECT id, content, keywords FROM deepbrain WHERE {where_sql} AND ({like_parts}) LIMIT 50",
+                    f"SELECT id, content, keywords, updated_at FROM deepbrain WHERE {where_sql} AND ({like_parts}) LIMIT 50",
                     kw_params,
                 ).fetchall()
             for row in rows:
                 content_lower = row["content"].lower()
                 score = sum(1 for t in query_terms if t in content_lower)
-                kw_results.append((row["id"], score))
-            kw_results.sort(key=lambda x: -x[1])
+                kw_results.append((row["id"], score, row["updated_at"] or ""))
+            # Primary: score DESC; Secondary: updated_at DESC (newer entries rank higher)
+            kw_results.sort(key=lambda x: (-x[1], x[2]), reverse=False)
+            # ISO timestamps sort ascending lexicographically; we want DESC, so reverse the string comparison
+            from functools import cmp_to_key
+            def _cmp(a, b):
+                if a[1] != b[1]:
+                    return -1 if a[1] > b[1] else 1
+                # Same score: newer (larger timestamp) should come first
+                if a[2] > b[2]:
+                    return -1
+                elif a[2] < b[2]:
+                    return 1
+                return 0
+            kw_results.sort(key=cmp_to_key(_cmp))
 
         # Vector search
         vec_results: list[tuple[str, float]] = []
@@ -543,12 +556,13 @@ class DeepBrain:
 
         # RRF fusion
         scores: dict[str, float] = {}
-        for rank, (eid, _) in enumerate(kw_results[:20]):
+        for rank, (eid, _, _ts) in enumerate(kw_results[:20]):
             scores[eid] = scores.get(eid, 0) + 1.0 / (_RRF_K + rank + 1)
         for rank, (eid, _) in enumerate(vec_results):
             scores[eid] = scores.get(eid, 0) + 1.0 / (_RRF_K + rank + 1)
 
         # Small recency bonus — tiebreaks towards newer entries without overriding relevance
+        # Uses seconds-level granularity so entries learned moments apart still get ordered
         if scores and _USE_RECENCY_BIAS:
             now_dt = datetime.now(timezone.utc)
             placeholders = ",".join("?" * len(scores))
@@ -560,8 +574,9 @@ class DeepBrain:
             for ts_row in ts_rows:
                 try:
                     updated = datetime.fromisoformat(ts_row["updated_at"].replace("Z", "+00:00"))
-                    age_days = (now_dt - updated).total_seconds() / 86400
-                    scores[ts_row["id"]] += 0.001 / (1.0 + age_days * 0.1)
+                    age_secs = (now_dt - updated).total_seconds()
+                    # Use seconds for fine granularity; strong enough to break keyword ties
+                    scores[ts_row["id"]] += 0.005 / (1.0 + age_secs * 0.1)
                 except Exception:
                     pass
 
