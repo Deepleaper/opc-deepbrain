@@ -28,8 +28,30 @@ except ImportError:
 
 _EMBED_MODEL = os.environ.get("DEEPBRAIN_EMBED_MODEL", "nomic-embed-text")
 _EMBED_URL = os.environ.get("DEEPBRAIN_EMBED_URL", "http://localhost:11434")
+_EMBED_PROVIDER = os.environ.get("DEEPBRAIN_EMBED_PROVIDER", "auto")  # auto|ollama|sentence-transformers|local
 _embed_available: bool | None = None
 _embed_lock = threading.Lock()
+
+# sentence-transformers lazy singleton
+_st_model: Any = None
+_st_lock = threading.Lock()
+
+def _get_st_embedding(text: str) -> list[float] | None:
+    """Get embedding via sentence-transformers (optional dependency)."""
+    global _st_model
+    try:
+        with _st_lock:
+            if _st_model is None:
+                from sentence_transformers import SentenceTransformer
+                model_name = os.environ.get("DEEPBRAIN_ST_MODEL", "all-MiniLM-L6-v2")
+                _st_model = SentenceTransformer(model_name)
+        vec = _st_model.encode(text[:2000], normalize_embeddings=True).tolist()
+        return vec
+    except ImportError:
+        return None
+    except Exception as e:
+        logger.debug("sentence-transformers error: %s", e)
+        return None
 
 # Local n-gram hash embedding — zero external dependencies, always available
 _LOCAL_EMBED_DIM = 256
@@ -67,10 +89,8 @@ def _local_embedding(text: str) -> list[float]:
     return [x / norm for x in vec] if norm else vec
 
 
-def _get_embedding(text: str) -> list[float] | None:
-    global _embed_available
-    if _embed_available is False:
-        return _local_embedding(text) if _USE_LOCAL_EMBED else None
+def _get_ollama_embedding(text: str) -> list[float] | None:
+    """Get embedding from Ollama API."""
     try:
         import urllib.request
         url = f"{_EMBED_URL.rstrip('/')}/api/embeddings"
@@ -78,16 +98,56 @@ def _get_embedding(text: str) -> list[float] | None:
         req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=0.5) as resp:
             data = json.loads(resp.read())
+        return data["embedding"]
+    except Exception:
+        return None
+
+
+def _get_embedding(text: str) -> list[float] | None:
+    """Get embedding with provider fallback chain: ollama → sentence-transformers → local → None."""
+    global _embed_available
+
+    provider = _EMBED_PROVIDER
+
+    # Explicit provider selection
+    if provider == "sentence-transformers":
+        vec = _get_st_embedding(text)
+        return vec if vec else (_local_embedding(text) if _USE_LOCAL_EMBED else None)
+    if provider == "local":
+        return _local_embedding(text) if _USE_LOCAL_EMBED else None
+    if provider == "ollama":
+        vec = _get_ollama_embedding(text)
+        return vec if vec else (_local_embedding(text) if _USE_LOCAL_EMBED else None)
+
+    # Auto mode: try ollama first, then sentence-transformers, then local
+    if _embed_available is False:
+        # Ollama known unavailable — try sentence-transformers
+        vec = _get_st_embedding(text)
+        if vec:
+            return vec
+        return _local_embedding(text) if _USE_LOCAL_EMBED else None
+
+    vec = _get_ollama_embedding(text)
+    if vec:
         with _embed_lock:
             _embed_available = True
-        return data["embedding"]
-    except Exception as e:
-        with _embed_lock:
-            if _embed_available is None:
-                fallback = "local n-gram embedding" if _USE_LOCAL_EMBED else "keyword fallback"
-                logger.info("Embedding unavailable (%s) — %s", e, fallback)
-                _embed_available = False
-        return _local_embedding(text) if _USE_LOCAL_EMBED else None
+        return vec
+
+    # Ollama failed
+    with _embed_lock:
+        if _embed_available is None:
+            _embed_available = False
+            logger.info("Ollama embedding unavailable — trying fallbacks")
+
+    # Try sentence-transformers
+    vec = _get_st_embedding(text)
+    if vec:
+        return vec
+
+    # Final fallback
+    if _USE_LOCAL_EMBED:
+        return _local_embedding(text)
+    return None
 
 
 def _vec_to_blob(vec: list[float]) -> bytes:
