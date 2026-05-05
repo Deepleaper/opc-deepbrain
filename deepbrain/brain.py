@@ -43,7 +43,7 @@ def _get_st_embedding(text: str) -> list[float] | None:
         with _st_lock:
             if _st_model is None:
                 from sentence_transformers import SentenceTransformer
-                model_name = os.environ.get("DEEPBRAIN_ST_MODEL", "all-MiniLM-L6-v2")
+                model_name = os.environ.get("DEEPBRAIN_ST_MODEL", "paraphrase-multilingual-MiniLM-L12-v2")
                 _st_model = SentenceTransformer(model_name)
         vec = _st_model.encode(text[:2000], normalize_embeddings=True).tolist()
         return vec
