@@ -2,40 +2,48 @@
 
 # 🧠 OPC DeepBrain
 
-**Embeddable Personal Knowledge Base — Self-Learning, 100% Local, in <2000 Lines**
+### Self-Evolving Knowledge Engine for AI Agents — 6-Layer Memory That Grows With You
 
-[![PyPI](https://img.shields.io/pypi/v/opc-deepbrain?color=%2334D058&label=PyPI)](https://pypi.org/project/opc-deepbrain/)
-[![Python](https://img.shields.io/badge/Python-3.10+-blue)](https://pypi.org/project/opc-deepbrain/)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/Deepleaper/opc-deepbrain?style=social)](https://github.com/Deepleaper/opc-deepbrain)
+### AI Agent 自进化知识引擎 — 6 层记忆，越用越聪明
+
+[![PyPI version](https://img.shields.io/pypi/v/opc-deepbrain.svg)](https://pypi.org/project/opc-deepbrain/)
+[![Downloads](https://img.shields.io/pypi/dm/opc-deepbrain.svg)](https://pypi.org/project/opc-deepbrain/)
+[![GitHub stars](https://img.shields.io/github/stars/deepleaper/opc-deepbrain.svg)](https://github.com/deepleaper/opc-deepbrain/stargazers)
+[![License](https://img.shields.io/badge/License-BSL--1.1-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
+[![Dependencies](https://img.shields.io/badge/Dependencies-0-green.svg)](#)
+
+[Website](https://www.deepleaper.com) · [Quick Start](#-quick-start) · [API Reference](#-api-reference) · [vs Mem0](#-comparison)
 
 </div>
 
-<p align="center">
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#6-layer-architecture">Architecture</a> ·
-  <a href="#api-reference">API</a> ·
-  <a href="#use-cases">Use Cases</a>
-</p>
-
 ---
 
-> **OPC DeepBrain** is a standalone knowledge engine that gives any AI agent long-term, evolving memory. SQLite-based, zero cloud dependency, zero heavy dependencies — just Python stdlib. Plug it into your existing agent framework in 3 lines of code.
->
-> **OPC DeepBrain** 是一个**个人自学习知识库**。本地 SQLite 存储，零云端依赖，你的数据永远在你的电脑上。3 行代码让任何 AI 拥有持久记忆。
+## 💡 Why DeepBrain?
 
-## Why DeepBrain?
+Memory solutions like Mem0 store facts. **DeepBrain evolves knowledge.**
 
-| | Vector DB (Pinecone, Chroma) | Key-Value Memory (Mem0) | **OPC DeepBrain** |
-|---|---|---|---|
-| **Memory evolution** | ❌ Static embeddings | ✅ Basic | ✅ **6-layer (L0→L5)** |
-| **Knowledge governance** | ❌ | ❌ | ✅ Conflict/decay/merge |
-| **Local-first** | ❌ Cloud | Partial | ✅ **SQLite, 100% local** |
-| **Dependencies** | Heavy | Moderate | ✅ **Zero** (stdlib only) |
-| **Codebase** | Large | Medium | ✅ **<2,000 lines** |
-| **Embeddable** | SDK | SDK | ✅ **3 lines** |
+| Problem | Mem0 / Others | DeepBrain |
+|---------|--------------|-----------|
+| Memory model | Flat key-value | 6-layer evolving hierarchy |
+| Quality control | None | 4-Gate validation system |
+| Knowledge growth | Manual CRUD | Auto-promotion through layers |
+| Dependencies | Redis, Qdrant, OpenAI… | **Zero** (stdlib only) |
+| Storage | Cloud vectors | SQLite (100% local) |
+| Self-awareness | ❌ | ✅ Meta-knowledge layer |
 
-## Quick Start
+**DeepBrain** is a standalone, embeddable knowledge engine that gives any AI agent **long-term, self-evolving memory** — in 3 lines of code, with zero dependencies.
+
+## ✨ Key Features
+
+- 🏗️ **6-Layer Memory Architecture** — From flash memory to meta-knowledge, just like the human brain
+- 🚪 **4-Gate Quality Control** — Every piece of knowledge passes Relevance → Novelty → Consistency → Utility gates
+- 📦 **Zero Dependencies** — Pure Python stdlib. No numpy, no torch, no API keys
+- 💾 **100% Local** — SQLite storage. Your knowledge never leaves your machine
+- 🔌 **Embeddable** — Drop into any Python agent framework in 3 lines
+- 🔄 **Auto-Evolution** — Knowledge automatically promotes, consolidates, and archives
+
+## 🚀 Quick Start
 
 ```bash
 pip install opc-deepbrain
@@ -44,128 +52,167 @@ pip install opc-deepbrain
 ```python
 from opc_deepbrain import DeepBrain
 
-brain = DeepBrain("./knowledge.db")
+# Initialize
+brain = DeepBrain("./my_brain.db")
 
-# Learn — information enters L0, evolves upward automatically
-brain.learn("User prefers concise answers", namespace="preferences")
-brain.learn("Project deadline is March 2026", namespace="project")
+# Learn
+brain.learn("User prefers concise, technical answers", source="conversation")
 
-# Recall — searches across all layers
-results = brain.recall("what does the user prefer", top_k=5)
-for r in results:
-    print(r.content, r.score)
+# Recall
+results = brain.recall("What communication style does the user prefer?")
+print(results[0].content)  # → "User prefers concise, technical answers"
 ```
 
-That's it. No config files, no API keys, no Docker.
+**That's it.** No API keys. No config. No cloud. 3 lines to persistent, evolving memory.
 
-## 6-Layer Architecture
+## 🏗️ 6-Layer Memory Architecture
 
 ```
-┌──────────────────────────────────────────────────┐
-│  L5  Consistency Guard   回归测试 · 异常检测       │
-├──────────────────────────────────────────────────┤
-│  L4  User Profiling      多维特征 · 偏好建模       │
-├──────────────────────────────────────────────────┤
-│  L3  Knowledge Gov.      冲突 · 淘汰 · 晋升       │
-├──────────────────────────────────────────────────┤
-│  L2  Skill Synthesis     跨会话聚类 · 合并 · 去重  │
-├──────────────────────────────────────────────────┤
-│  L1  Structured Extract  4Gate 门控过滤            │
-├──────────────────────────────────────────────────┤
-│  L0  Raw Storage         原始输入                  │
-├──────────────────────────────────────────────────┤
-│  💾  SQLite              本地 · 零依赖 · 可控      │
-└──────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│  Layer 5: 🔮 Meta-Knowledge                     │
+│  "I know that I know X well, but Y is uncertain"│
+├─────────────────────────────────────────────────┤
+│  Layer 4: 🗄️ Archived                           │
+│  Historical reference, low-access but preserved  │
+├─────────────────────────────────────────────────┤
+│  Layer 3: 🏗️ Consolidated                       │
+│  Cross-session patterns, validated over time     │
+├─────────────────────────────────────────────────┤
+│  Layer 2: 📚 Long-Term                          │
+│  Validated knowledge, frequently accessed        │
+├─────────────────────────────────────────────────┤
+│  Layer 1: 📝 Short-Term                         │
+│  Recent interactions, hours to days              │
+├─────────────────────────────────────────────────┤
+│  Layer 0: ⚡ Flash Memory                        │
+│  Current session buffer, minutes                 │
+└─────────────────────────────────────────────────┘
+         ↑ Auto-promotion based on relevance,
+           frequency, and validation scores
 ```
 
-**How it works:**
-1. **L0**: Raw data goes in (conversations, documents, any text)
-2. **L1**: 4Gate filter decides what's worth keeping (novelty / actionability / durability / relevance)
-3. **L2**: Cross-session clustering merges related knowledge
-4. **L3**: Governance layer resolves conflicts, decays stale info, promotes proven knowledge
-5. **L4**: Builds multi-dimensional user/context profiles
-6. **L5**: Consistency guardian runs regression checks, detects anomalies
+### How Knowledge Evolves
 
-## Key Features
+1. **Ingestion** → New knowledge enters Layer 0 (Flash)
+2. **4-Gate Check** → Relevance, Novelty, Consistency, Utility scoring
+3. **Promotion** → High-quality knowledge moves up layers over time
+4. **Consolidation** → Related facts merge into coherent understanding
+5. **Meta-Learning** → The system learns its own knowledge strengths/gaps
 
-| Feature | Description |
-|---------|-------------|
-| 🧠 **6-Layer Evolution** | Knowledge automatically matures from raw input to governed, tested wisdom |
-| 💾 **SQLite Storage** | Single file, zero setup, fully portable |
-| 🔍 **Hybrid Search** | Keyword search built-in; semantic search with optional embeddings |
-| 📊 **Knowledge Visualization** | Export to HTML, browse in any browser |
-| 🏗️ **Namespace Isolation** | Multiple agents share one DB, knowledge stays separated |
-| ⚡ **Minimal Footprint** | 1,794 lines of Python. No numpy, no torch, no heavy deps |
-| 🔌 **Embeddable** | Standard Python API — works with LangChain, CrewAI, custom agents, anything |
+## 🚪 4-Gate Quality Control
 
-## API Reference
+Every piece of knowledge must pass through 4 gates:
+
+| Gate | Purpose | Question Asked |
+|------|---------|---------------|
+| 🎯 **Relevance** | Is this useful? | Does this relate to active contexts? |
+| 🆕 **Novelty** | Is this new? | Do we already know this? |
+| ✅ **Consistency** | Does this fit? | Does it contradict existing knowledge? |
+| 🔧 **Utility** | Is this actionable? | Can this improve future responses? |
+
+## 📖 API Reference
+
+### Core API
 
 ```python
-brain = DeepBrain("path/to/db.sqlite")
+from opc_deepbrain import DeepBrain
 
-# Core operations
-brain.learn(content, namespace="default")       # Store & begin evolution
-brain.recall(query, top_k=5, namespace=None)    # Search across layers
-brain.forget(content_id)                        # Remove specific knowledge
-brain.evolve()                                  # Trigger manual evolution cycle
+brain = DeepBrain(db_path="./brain.db")
 
-# Visualization
-brain.export_html("output/")                    # Browse knowledge in browser
+# Learn — store knowledge
+brain.learn(
+    content="FastAPI is preferred over Flask for new projects",
+    source="architecture-review",
+    category="tech-decisions",
+    tags=["python", "web", "architecture"]
+)
 
-# Namespace management
-brain.namespaces()                              # List all namespaces
-brain.stats()                                   # Knowledge base statistics
+# Recall — retrieve relevant knowledge
+results = brain.recall(
+    query="Which web framework should we use?",
+    top_k=5,
+    min_score=0.3
+)
+
+# Search — keyword search
+results = brain.search("FastAPI", category="tech-decisions")
+
+# Stats — memory statistics
+stats = brain.stats()
+print(f"Total entries: {stats['total']}")
+print(f"By layer: {stats['by_layer']}")
+
+# Evolve — trigger manual evolution cycle
+brain.evolve()
+
+# Export / Import
+brain.export("backup.json")
+brain.load("backup.json")
 ```
 
-## Use Cases
+### Embedding in Your Agent
 
-**Chatbots** — Give your bot persistent memory across sessions. It remembers user preferences, past conversations, and learned patterns.
+```python
+# Works with any agent framework
+class MyAgent:
+    def __init__(self):
+        self.brain = DeepBrain("./agent_brain.db")
 
-**Knowledge Management** — Build a personal/team knowledge base that self-organizes. No manual tagging required.
+    def chat(self, user_message):
+        # Recall relevant context
+        context = self.brain.recall(user_message, top_k=3)
 
-**AI Assistants** — Embed in personal assistants so they improve with use. Calendar preferences, communication style, domain knowledge — all learned automatically.
+        # Generate response (your LLM call here)
+        response = self.llm.generate(user_message, context=context)
 
-**Customer Service** — Agents that remember client history, common issues, and successful resolutions.
+        # Learn from the interaction
+        self.brain.learn(
+            f"User asked about: {user_message}",
+            source="conversation"
+        )
 
-**Any "AI that gets smarter"** scenario — If your project needs an AI that improves over time, DeepBrain is the memory layer.
+        return response
+```
 
-## System Requirements
+## ⚖️ Comparison / 对比
 
-- Python >= 3.10
-- No additional dependencies (embedding support is optional)
-- Works on Linux / macOS / Windows
+| Feature | **OPC DeepBrain** | Mem0 | ChromaDB | Pinecone |
+|---------|:-:|:-:|:-:|:-:|
+| Memory Model | 6-layer evolving | Flat store | Vector store | Vector store |
+| Quality Control | 4-Gate system | ❌ | ❌ | ❌ |
+| Auto-Evolution | ✅ | ❌ | ❌ | ❌ |
+| Meta-Knowledge | ✅ | ❌ | ❌ | ❌ |
+| Dependencies | **0** | 5+ | 3+ | 2+ |
+| Storage | SQLite (local) | Redis + Qdrant | Local/Cloud | Cloud only |
+| Cloud Required | ❌ | ⚠️ Optional | ⚠️ Optional | ✅ Yes |
+| Pricing | **Free** | Free/Paid | Free/Paid | Paid |
+| Self-Evolving | ✅ | ❌ | ❌ | ❌ |
+| Python stdlib only | ✅ | ❌ | ❌ | ❌ |
 
-## Project Stats
+## 🔌 Integrations
 
-| Metric | Value |
-|--------|-------|
-| Version | **v0.3.1** |
-| Source code | **1,794** lines Python |
-| Tests | **211** lines |
-| Dependencies | **0** (stdlib only) |
+DeepBrain powers memory in:
+- [OPC Agent](https://github.com/deepleaper/opc-agent) — Local AI agent
+- [Leaper Agent](https://github.com/deepleaper/leaper-agent) — Global agent framework
+- [Leaper Agent CN](https://github.com/deepleaper/leaper-agent-cn) — China-optimized agent
+- **Your project** — `pip install opc-deepbrain` and go
 
-## License
+## 📄 License
 
-[MIT](LICENSE) — use it anywhere, commercial or otherwise.
+[BSL-1.1](LICENSE) — see LICENSE for details.
 
-## Related Projects
+## 🤝 Contributing
 
-> **DeepBrain 技术落地顺序：** Leaper Agent CN（首发）→ Leaper Agent Global → OPC DeepBrain
->
-> OPC DeepBrain 定位是**个人自学习知识库**——纯本地、零成本、数据完全私有。适合个人用户和隐私敏感场景。
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-| Project | Description |
-|---------|-------------|
-| [leaper-agent](https://github.com/Deepleaper/leaper-agent) | 🚀 Full AI Agent framework with DeepBrain built in |
-| [leaper-agent-cn](https://github.com/Deepleaper/leaper-agent-cn) | 🇨🇳 中国版 Agent 框架，内置 DeepBrain |
+📧 Contact: [tech@deepleaper.com](mailto:tech@deepleaper.com)
 
 ---
 
 <div align="center">
-  <a href="https://github.com/Deepleaper"><strong>Deepleaper 跃盟开源</strong></a><br>
-  <sub>Memory is what makes AI intelligent. 记忆让 AI 真正聪明。</sub>
-</div>
 
-<div align="center">
-  ⭐ If your AI should remember, star this repo.
+**Built with ❤️ by [Deepleaper Technology / 跃盟科技](https://www.deepleaper.com)**
+
+*Give your AI agent a brain that evolves.*
+
 </div>
