@@ -36,21 +36,27 @@ _embed_lock = threading.Lock()
 _st_model: Any = None
 _st_lock = threading.Lock()
 
+_st_failed: bool = False
+
 def _get_st_embedding(text: str) -> list[float] | None:
     """Get embedding via sentence-transformers (optional dependency)."""
-    global _st_model
+    global _st_model, _st_failed
+    if _st_failed:
+        return None
     try:
         with _st_lock:
             if _st_model is None:
                 from sentence_transformers import SentenceTransformer
                 model_name = os.environ.get("DEEPBRAIN_ST_MODEL", "paraphrase-multilingual-MiniLM-L12-v2")
-                _st_model = SentenceTransformer(model_name)
+                _st_model = SentenceTransformer(model_name, local_files_only=True)
         vec = _st_model.encode(text[:2000], normalize_embeddings=True).tolist()
         return vec
     except ImportError:
+        _st_failed = True
         return None
-    except Exception as e:
+    except (Exception, BaseException) as e:
         logger.debug("sentence-transformers error: %s", e)
+        _st_failed = True
         return None
 
 # Local n-gram hash embedding — zero external dependencies, always available

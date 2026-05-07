@@ -6,4 +6,5 @@ from deepbrain.chunker import chunk_document
 from deepbrain.watch import watch_directory
 
 __all__ = ["DeepBrain", "ingest_directory", "ingest_file", "chunk_document", "watch_directory"]
-__version__ = "0.4.0"
+__version__ = "0.4.1"
+
