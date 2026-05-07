@@ -50,7 +50,7 @@ pip install opc-deepbrain
 ```
 
 ```python
-from opc_deepbrain import DeepBrain
+from deepbrain import DeepBrain
 
 # Initialize
 brain = DeepBrain("./my_brain.db")
@@ -59,8 +59,8 @@ brain = DeepBrain("./my_brain.db")
 brain.learn("User prefers concise, technical answers", source="conversation")
 
 # Recall
-results = brain.recall("What communication style does the user prefer?")
-print(results[0].content)  # → "User prefers concise, technical answers"
+results = brain.search("What communication style does the user prefer?")
+print(results[0]["content"])  # → "User prefers concise, technical answers"
 ```
 
 **That's it.** No API keys. No config. No cloud. 3 lines to persistent, evolving memory.
@@ -115,7 +115,7 @@ Every piece of knowledge must pass through 4 gates:
 ### Core API
 
 ```python
-from opc_deepbrain import DeepBrain
+from deepbrain import DeepBrain
 
 brain = DeepBrain(db_path="./brain.db")
 
@@ -123,31 +123,26 @@ brain = DeepBrain(db_path="./brain.db")
 brain.learn(
     content="FastAPI is preferred over Flask for new projects",
     source="architecture-review",
-    category="tech-decisions",
-    tags=["python", "web", "architecture"]
+    namespace="tech-decisions"
 )
 
 # Recall — retrieve relevant knowledge
-results = brain.recall(
+results = brain.search(
     query="Which web framework should we use?",
-    top_k=5,
-    min_score=0.3
+    top_k=5
 )
 
 # Search — keyword search
-results = brain.search("FastAPI", category="tech-decisions")
+results = brain.search("FastAPI", namespace="tech-decisions")
 
 # Stats — memory statistics
 stats = brain.stats()
 print(f"Total entries: {stats['total']}")
-print(f"By layer: {stats['by_layer']}")
+print(f"By layer: {stats['by_namespace']}")
 
 # Evolve — trigger manual evolution cycle
 brain.evolve()
 
-# Export / Import
-brain.export("backup.json")
-brain.load("backup.json")
 ```
 
 ### Embedding in Your Agent
@@ -160,7 +155,7 @@ class MyAgent:
 
     def chat(self, user_message):
         # Recall relevant context
-        context = self.brain.recall(user_message, top_k=3)
+        context = self.brain.search(user_message, top_k=3)
 
         # Generate response (your LLM call here)
         response = self.llm.generate(user_message, context=context)
@@ -216,3 +211,5 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md).
 *Give your AI agent a brain that evolves.*
 
 </div>
+
+
