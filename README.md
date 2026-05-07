@@ -1,3 +1,6 @@
+> ⚠️ **DEPRECATED**: OPC DeepBrain has been merged into [OPC Agent](https://github.com/Deepleaper/opc-agent) v1.0.0+.
+> Install pip install opc-agent to get both the Agent and DeepBrain in a single package.
+> This repository is archived for reference only.
 <div align="center">
 
 # 🧠 OPC DeepBrain
