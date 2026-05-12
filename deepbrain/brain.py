@@ -197,6 +197,35 @@ _STOP_WORDS = frozenset(
     "off over under again further once here there".split()
 )
 
+# ─── Synonym Expansion (lightweight, no external deps) ───────────────────────
+# Bidirectional: if query contains any key, expand with all values in the same group.
+_SYNONYM_GROUPS: list[frozenset[str]] = [
+    frozenset(["转型", "转", "转变", "放弃", "转向"]),
+    frozenset(["数据库", "mysql", "postgresql", "postgres", "mongodb", "sqlite", "redis", "数据存储"]),
+    frozenset(["上线", "发布", "延期", "延迟", "推迟", "上线时间", "发布时间"]),
+    frozenset(["业务", "收入", "营收", "转化率", "付费", "gmv", "arpu"]),
+    frozenset(["数据", "指标", "kpi", "转化率", "增长率", "留存"]),
+    frozenset(["成本", "费用", "获客", "cac", "花费"]),
+    frozenset(["融资", "轮", "投资", "估值"]),
+    frozenset(["团队", "人数", "headcount", "人员", "规模"]),
+    frozenset(["技术", "架构", "系统", "平台", "技术栈"]),
+    frozenset(["竞品", "竞争", "对手", "竞争对手"]),
+]
+
+def _expand_synonyms(terms: list[str]) -> list[str]:
+    """Expand query terms with synonyms from predefined groups."""
+    expanded = list(terms)
+    seen = set(t.lower() for t in terms)
+    for term in terms:
+        t_lower = term.lower()
+        for group in _SYNONYM_GROUPS:
+            if t_lower in group:
+                for syn in group:
+                    if syn not in seen:
+                        expanded.append(syn)
+                        seen.add(syn)
+    return expanded
+
 # Negation words used for keyword-scoped contradiction detection
 _NEGATION_WORDS: frozenset[str] = frozenset([
     "not", "no", "never", "neither", "nor", "lack", "fail", "false",
@@ -565,6 +594,7 @@ class DeepBrain:
         now_str = _now()
         query_vec = _get_embedding(query)
         query_terms = [t.lower() for t in _extract_keywords(query) if t not in _STOP_WORDS]
+        query_terms = _expand_synonyms(query_terms)
 
         # Base filter
         where = ["(status='active' OR status IS NULL)", "(valid_until IS NULL OR valid_until > ?)"]
@@ -580,8 +610,9 @@ class DeepBrain:
         # Keyword search
         kw_results: list[tuple[str, float, str]] = []  # (id, score, updated_at)
         if query_terms:
-            like_parts = " OR ".join(["content LIKE ?"] * len(query_terms))
-            kw_params = params + [f"%{t}%" for t in query_terms[:5]]
+            search_terms = query_terms[:10]  # cap expanded terms
+            like_parts = " OR ".join(["content LIKE ?"] * len(search_terms))
+            kw_params = params + [f"%{t}%" for t in search_terms]
             with self._lock:
                 rows = self.conn.execute(
                     f"SELECT id, content, keywords, updated_at FROM deepbrain WHERE {where_sql} AND ({like_parts}) LIMIT 50",
